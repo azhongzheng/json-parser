@@ -17,7 +17,8 @@ namespace Lexer
         RSB,
         COMMA,
         COLON,
-        END_LINE
+        END_LINE,
+        END_TAG
     };
     std::map<Tag, std::string> tag_to_string{
         {BEGIN, "{"}, {END, "}"}, {LSB, "["}, {RSB, "]"}, {COMMA, ","}, {COLON, ":"}};
@@ -56,6 +57,10 @@ namespace Lexer
     {
     public:
         StringToken(const std::string &str) : Token(STRING), value(str) {}
+        static std::string get_content(Token *tok)
+        {
+            return static_cast<StringToken *>(tok)->value;
+        }
         std::string to_string() const override
         {
             return "<string:" + value + ">";
@@ -72,6 +77,10 @@ namespace Lexer
         std::string to_string() const override
         {
             return "<integer:" + std::to_string(value) + ">";
+        }
+        static int64_t get_content(Token *tok)
+        {
+            return static_cast<Integer *>(tok)->value;
         }
 
     private:
@@ -110,12 +119,21 @@ namespace Lexer
             throw std::runtime_error("TokenStream::match syntax error! token not mathed");
         }
 
-        void print(){
-            for (auto tok: tokens)
+        Tag get_cur_tag()
+        {
+            return current()->get_tag();
+        }
+
+        void print()
+        {
+            for (auto tok : tokens)
             {
                 tok->print();
             }
-            
+        }
+        size_t size() const
+        {
+            return tokens.size();
         }
 
     private:
@@ -139,6 +157,7 @@ namespace Lexer
         for (int i = 0; i < str.size(); i++)
         {
             char ch = str[i];
+            //{133\"hey\ng\tgg\"}
             if (isdigit(ch))
             {
                 long long v = ch - '0';
@@ -211,8 +230,162 @@ namespace Lexer
                 break;
             }
         }
-        // token_stream.push(new Token(END_TAG));
+        token_stream.push(new Token(END_TAG));
         return token_stream;
+    }
+
+}
+
+namespace
+{
+
+}
+
+namespace Parser
+{
+
+    enum NodeType
+    {
+        UNIT,
+        ARRAY,
+        GROUP,
+        SINGLE
+    };
+
+    class Node
+    {
+    public:
+        // virtual JSON *gen_json() = 0;
+
+    private:
+    };
+
+    class Unit : public Node
+    {
+    public:
+        Unit(const std::string &str) : is_number(false), text(str) {}
+        Unit(int64_t v) : is_number(true), integer(v) {}
+
+    private:
+        bool is_number;
+        std::string text;
+        int64_t integer;
+    };
+
+    class Ojbect : public Node
+    {
+    public:
+        Ojbect(const std::string &str, Node *v) : member_variable_name(str), value(v){};
+        std::string get_name() const
+        {
+            return member_variable_name;
+        }
+
+    private:
+        std::string member_variable_name;
+        Node *value;
+    };
+
+    class Array : public Node
+    {
+    public:
+        Array(const std::vector<Node *> &ele) : elements(ele){};
+
+    private:
+        std::vector<Node *> elements;
+    };
+
+    class Group : public Node
+    {
+    public:
+        Group(const std::map<std::string, Node *> &tab) : member_table(tab) {}
+
+    private:
+        std::map<std::string, Node *> member_table;
+    };
+
+    Node *parse_unit(Lexer::TokenStream &token_stream);
+
+    Ojbect *parse_single(Lexer::TokenStream &ts)
+    {
+
+        auto variable_name = ts.current();
+        ts.match(Lexer::STRING);
+        ts.match(Lexer::COLON);
+        return new Ojbect(Lexer::StringToken::get_content(variable_name), parse_unit(ts));
+    }
+
+    Array *parse_array(Lexer::TokenStream &ts)
+    {
+        ts.match(Lexer::LSB);
+        std::vector<Node *> vec;
+        while (true)
+        {
+            vec.push_back(parse_unit(ts));
+            if (ts.get_cur_tag() != Lexer::COMMA)
+                break;
+        }
+
+        ts.match(Lexer::RSB);
+        return new Array(vec);
+    }
+
+    Group *parse_group(Lexer::TokenStream &ts)
+    {
+        ts.match(Lexer::BEGIN);
+        std::map<std::string, Node *> table;
+        while (true)
+        {
+            auto variable_name = ts.current();
+            ts.match(Lexer::STRING);
+            ts.match(Lexer::COLON);
+            table.insert({Lexer::StringToken::get_content(variable_name), parse_unit(ts)});
+            if (ts.get_cur_tag() != Lexer::COMMA)
+                break;
+        }
+
+        ts.match(Lexer::END);
+        return new Group(table);
+    }
+
+    Node *parse_unit(Lexer::TokenStream &ts)
+    {
+        switch (ts.get_cur_tag())
+        {
+        case Lexer::INTEGER:
+        {
+            auto v = Lexer::Integer::get_content(ts.current());
+            ts.match(Lexer::INTEGER);
+            return new Unit(v);
+            break;
+        }
+        case Lexer::STRING:
+        {
+            auto front_part = ts.current();
+            ts.match(Lexer::STRING);
+            if (front_part->get_tag() == Lexer::COLON)
+            {
+                ts.match(Lexer::COMMA);
+                return new Ojbect(Lexer::StringToken::get_content(front_part), parse_unit(ts));
+            }
+            else
+            {
+                return new Unit(Lexer::StringToken::get_content(front_part));
+            }
+            break;
+        }
+        case Lexer::LSB:
+        {
+            return parse_array(ts);
+        }
+        case Lexer::BEGIN:
+        {
+            return parse_group(ts);
+        }
+        default:
+            throw std::runtime_error("json-sysntax error");
+            break;
+        }
     }
 
 }
@@ -222,7 +395,7 @@ int main(int argc, char const *argv[])
     /* code */
     using namespace std;
     using namespace Lexer;
-    auto ts = build_token_stream("{1\"hey\ng\tgg\"}");
+    auto ts = build_token_stream("{133\"hey\ng\tgg\"}");
     ts.print();
     return 0;
 }
