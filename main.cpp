@@ -21,7 +21,7 @@ namespace Lexer
         END_TAG
     };
     std::map<Tag, std::string> tag_to_string{
-        {BEGIN, "{"}, {END, "}"}, {LSB, "["}, {RSB, "]"}, {COMMA, ","}, {COLON, ":"}};
+        {BEGIN, "{"}, {END, "}"}, {LSB, "["}, {RSB, "]"}, {COMMA, ","}, {COLON, ":"}, {END_TAG, "EOF"}};
 
     std::map<std::string, Tag> string_to_tag{
         {"{", BEGIN}, {"}", END}, {"[", LSB}, {"]", RSB}, {",", COMMA}, {":", COLON}};
@@ -138,7 +138,7 @@ namespace Lexer
 
     private:
         std::vector<Token *> tokens;
-        int cur_p;
+        int cur_p = 0;
     };
 
     class EndLine : public Token
@@ -243,28 +243,37 @@ namespace
 
 namespace Parser
 {
-
     enum NodeType
     {
-        UNIT,
+        STRING,
+        INT,
         ARRAY,
-        GROUP,
-        SINGLE
+        GROUP
     };
 
     class Node
     {
     public:
-        // virtual JSON *gen_json() = 0;
+        Node(NodeType nt);
+        int get_int();
+        std::string get_str();
+        Node *operator[](const std::string &str);
+        Node *operator[](size_t idx);
+        NodeType get_type() const { return type; }
+        virtual ~Node();
 
     private:
+        NodeType type;
     };
 
     class Unit : public Node
     {
     public:
-        Unit(const std::string &str) : is_number(false), text(str) {}
-        Unit(int64_t v) : is_number(true), integer(v) {}
+        Unit(const std::string &str);
+        Unit(int64_t v);
+        static int64_t get_integer(Node *node);
+        static std::string get_str(Node *node);
+        ~Unit() {}
 
     private:
         bool is_number;
@@ -272,49 +281,111 @@ namespace Parser
         int64_t integer;
     };
 
-    class Ojbect : public Node
-    {
-    public:
-        Ojbect(const std::string &str, Node *v) : member_variable_name(str), value(v){};
-        std::string get_name() const
-        {
-            return member_variable_name;
-        }
-
-    private:
-        std::string member_variable_name;
-        Node *value;
-    };
-
-    class Array : public Node
-    {
-    public:
-        Array(const std::vector<Node *> &ele) : elements(ele){};
-
-    private:
-        std::vector<Node *> elements;
-    };
-
     class Group : public Node
     {
     public:
-        Group(const std::map<std::string, Node *> &tab) : member_table(tab) {}
+        Group(const std::map<std::string, Node *> &tab);
+        Node *operator[](const std::string &str) const;
+        ~Group();
 
     private:
         std::map<std::string, Node *> member_table;
     };
 
-    Node *parse_unit(Lexer::TokenStream &token_stream);
-
-    Ojbect *parse_single(Lexer::TokenStream &ts)
+    class Array : public Node
     {
+    public:
+        Array(const std::vector<Node *> &ele);
+        Node *operator[](size_t idx) const;
+        ~Array();
 
-        auto variable_name = ts.current();
-        ts.match(Lexer::STRING);
-        ts.match(Lexer::COLON);
-        return new Ojbect(Lexer::StringToken::get_content(variable_name), parse_unit(ts));
+    private:
+        std::vector<Node *> elements;
+    };
+
+    //=====================================
+    // Node
+    Node::Node(NodeType nt) : type(nt) {}
+    int Node::get_int()
+    {
+        if (type == INT)
+        {
+            return Unit::get_integer(this);
+        }
+        else
+            throw std::runtime_error("type not matched");
+    }
+    std::string Node::get_str()
+    {
+        if (type == STRING)
+        {
+            return Unit::get_str(this);
+        }
+        else
+            throw std::runtime_error("type not matched");
+    }
+    Node *Node::operator[](const std::string &str)
+    {
+        if (type != GROUP)
+        {
+            throw std::runtime_error("type not matched, experted an array");
+        }
+        return static_cast<Group *>(this)->operator[](str);
+    }
+    Node *Node::operator[](size_t idx)
+    {
+        if (type != ARRAY)
+        {
+            throw std::runtime_error("type not matched, expected an array");
+        }
+        return static_cast<Array *>(this)->operator[](idx);
+    }
+    Node::~Node() {}
+    // Unit
+    Unit::Unit(const std::string &str) : Node(STRING), is_number(false), text(str) {}
+    Unit::Unit(int64_t v) : Node(INT), is_number(true), integer(v) {}
+    int64_t Unit::get_integer(Node *node)
+    {
+        return static_cast<Unit *>(node)->integer;
+    }
+    std::string Unit::get_str(Node *node)
+    {
+        return static_cast<Unit *>(node)->text;
     }
 
+    //Array
+    Array::Array(const std::vector<Node *> &ele) : Node(ARRAY), elements(ele){};
+    Node *Array::operator[](size_t idx) const
+    {
+        if (idx > elements.size())
+            throw std::runtime_error("Array out of range!");
+        return elements[idx];
+    }
+    Array::~Array()
+    {
+        for (auto e : elements)
+        {
+            delete e;
+        }
+    }
+    // Group
+    Group::Group(const std::map<std::string, Node *> &tab) : Node(GROUP), member_table(tab) {}
+    Node *Group::operator[](const std::string &str) const
+    {
+        auto it = member_table.find(str);
+        if (it == member_table.end())
+        {
+            throw std::runtime_error("key " + str + " not found");
+        }
+        return it->second;
+    }
+    Group::~Group()
+    {
+        for (auto it : member_table)
+            delete it.second;
+    }
+
+    Node *parse_unit(Lexer::TokenStream &token_stream);
     Array *parse_array(Lexer::TokenStream &ts)
     {
         ts.match(Lexer::LSB);
@@ -329,7 +400,6 @@ namespace Parser
         ts.match(Lexer::RSB);
         return new Array(vec);
     }
-
     Group *parse_group(Lexer::TokenStream &ts)
     {
         ts.match(Lexer::BEGIN);
@@ -347,7 +417,6 @@ namespace Parser
         ts.match(Lexer::END);
         return new Group(table);
     }
-
     Node *parse_unit(Lexer::TokenStream &ts)
     {
         switch (ts.get_cur_tag())
@@ -356,31 +425,22 @@ namespace Parser
         {
             auto v = Lexer::Integer::get_content(ts.current());
             ts.match(Lexer::INTEGER);
-            return new Unit(v);
-            break;
+            return (Node *)new Unit(v);
         }
         case Lexer::STRING:
         {
             auto front_part = ts.current();
             ts.match(Lexer::STRING);
-            if (front_part->get_tag() == Lexer::COLON)
-            {
-                ts.match(Lexer::COMMA);
-                return new Ojbect(Lexer::StringToken::get_content(front_part), parse_unit(ts));
-            }
-            else
-            {
-                return new Unit(Lexer::StringToken::get_content(front_part));
-            }
-            break;
+
+            return (Node *)new Unit(Lexer::StringToken::get_content(front_part));
         }
         case Lexer::LSB:
         {
-            return parse_array(ts);
+            return (Node *)parse_array(ts);
         }
         case Lexer::BEGIN:
         {
-            return parse_group(ts);
+            return (Node *)parse_group(ts);
         }
         default:
             throw std::runtime_error("json-sysntax error");
@@ -390,12 +450,57 @@ namespace Parser
 
 }
 
+class JSON
+{
+public:
+    JSON(const std::string &str)
+    {
+        auto ts = Lexer::build_token_stream(str);
+        node = Parser::parse_unit(ts);
+    }
+    ~JSON()
+    {
+        delete node;
+    }
+
+    int get_int()
+    {
+        return node->get_int();
+    }
+    std::string get_str()
+    {
+        return node->get_str();
+    }
+    Parser::Node *operator[](const std::string &str)
+    {
+        return node->operator[](str);
+    }
+    Parser::Node *operator[](size_t idx)
+    {
+        return node->operator[](idx);
+    }
+
+private:
+    Parser::Node *node;
+};
+
 int main(int argc, char const *argv[])
 {
     /* code */
     using namespace std;
     using namespace Lexer;
     auto ts = build_token_stream("{133\"hey\ng\tgg\"}");
-    ts.print();
+    // ts.print();
+
+    try
+    {
+        JSON js("[12, 23]");
+        std::cout << js.get_int();
+    }
+    catch (const std::exception &e)
+    {
+        std::cout << e.what() << '\n';
+    }
+
     return 0;
 }
