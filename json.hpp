@@ -44,7 +44,7 @@ namespace Lexer
             return tag;
         }
 
-        void print() const
+        virtual void print() const
         {
             std::cout << to_string();
         }
@@ -233,11 +233,6 @@ namespace Lexer
         token_stream.push(new Token(END_TAG));
         return token_stream;
     }
-
-}
-
-namespace
-{
 
 }
 
@@ -462,7 +457,6 @@ public:
     JSON(const std::string &str) : child(false)
     {
         auto ts = Lexer::build_token_stream(str);
-        // ts.print();
         node = Parser::parse_unit(ts);
     }
     JSON(Parser::Node *n) : child(true), node(n) {}
@@ -490,22 +484,6 @@ public:
     }
 
 private:
-    // Parser::Node *node;
     bool child = false;
     Parser::Node *node;
 };
-
-std::string read_file(const std::string &filename)
-{
-    std::ifstream ifs(filename);
-    if (ifs.bad())
-        throw std::runtime_error("open " + filename + " failed");
-
-    std::string res;
-    std::string line;
-    while (getline(ifs, line))
-        res += line;
-    return res;
-}
-
-

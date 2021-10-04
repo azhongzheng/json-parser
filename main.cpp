@@ -1,5 +1,19 @@
 #include "json.hpp"
 
+std::string read_file(const std::string &filename)
+{
+    std::ifstream ifs(filename);
+    if (ifs.bad())
+        throw std::runtime_error("open " + filename + " failed");
+
+    std::string res;
+    std::string line;
+    while (getline(ifs, line))
+        res += line;
+    return res;
+}
+
+
 int main(int argc, char const *argv[])
 {
     /* code */
